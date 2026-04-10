@@ -6,7 +6,9 @@ function inferDiseaseProbabilities(records) {
 
   records.forEach((r) => {
     const disease = (r.disease || "unknown").toLowerCase();
-    const cases = Number(r.cases) || 0;
+
+    // ✅ SAFE CASE HANDLING
+    const cases = Number(r.no_of_cases || r.cases) || 0;
 
     if (!totals[disease]) totals[disease] = 0;
 
@@ -15,9 +17,13 @@ function inferDiseaseProbabilities(records) {
   });
 
   let probs = {};
+  const numDiseases = Object.keys(totals).length;
 
   for (let d in totals) {
-    probs[d] = totalCases > 0 ? totals[d] / totalCases : 0;
+    probs[d] =
+      totalCases > 0
+        ? (totals[d] + 1) / (totalCases + numDiseases) // smoothing
+        : 0;
   }
 
   return probs;

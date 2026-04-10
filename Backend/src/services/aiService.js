@@ -15,7 +15,6 @@ const getAIAnalysis = async (records, weather) => {
       };
     }
 
-    // 🔥 STRONG PROMPT
     const prompt = `
 You are a disease outbreak prediction engine.
 
@@ -28,20 +27,11 @@ RULES:
 - Increase riskFactor if cases are rising
 - Choose mainDisease based on highest + increasing cases
 
-EXAMPLES:
-
-Input:
-dengue: 10, dengue: 20, dengue: 30
-Output:
-{"riskFactor": 0.8, "mainDisease": "dengue"}
-
-Input:
-malaria: 5, malaria: 6, malaria: 7
-Output:
-{"riskFactor": 0.5, "mainDisease": "malaria"}
-
 DATA:
-${records.map(r => `${r.disease}: ${r.cases}`).join(", ")}
+${records.map(r => {
+  const cases = Number(r.no_of_cases || r.cases) || 0;
+  return `${r.disease}: ${cases}`;
+}).join(", ")}
 
 WEATHER:
 Temp: ${weather?.temp}
@@ -66,9 +56,7 @@ ONLY RETURN JSON.
     );
 
     let text = response.data.choices[0].message.content;
-    console.log("RAW AI:", text);
 
-    // Extract JSON
     const match = text.match(/\{[\s\S]*?\}/);
     if (!match) throw new Error("No JSON");
 
@@ -76,19 +64,17 @@ ONLY RETURN JSON.
 
     let risk = Number(parsed.riskFactor);
 
-    // 🔥 FALLBACK IF AI FAILS
+    // fallback
     if (isNaN(risk) || risk <= 0 || risk > 1) {
-      const values = records.map(r => r.cases);
+      const values = records.map(r => Number(r.no_of_cases || r.cases) || 0);
 
       const first = values[0] || 1;
       const last = values[values.length - 1] || 1;
 
       const growth = Math.log((last + 1) / (first + 1));
-
       risk = 0.5 + Math.min(Math.max(growth, 0), 0.4);
     }
 
-    // Clamp range
     risk = Math.min(Math.max(risk, 0.3), 0.9);
 
     return {

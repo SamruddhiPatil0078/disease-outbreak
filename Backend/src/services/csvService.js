@@ -1,56 +1,40 @@
 const fs = require("fs");
-const csv = require("csv-parser");
+const readline = require("readline");
 
-const parseCSV = (filePath) => {
-  return new Promise((resolve, reject) => {
-    const results = [];
+const parseCSV = async (filePath) => {
+  const results = [];
 
-    fs.createReadStream(filePath)
-      .pipe(csv())
-      .on("data", (row) => {
-        const { area, city, date } = row;
+  const fileStream = fs.createReadStream(filePath);
 
-        // ✅ Case 1: Already normalized format
-        if (row.disease && row.cases) {
-          const casesValue = parseInt(row.cases);
-
-          if (!isNaN(casesValue) && casesValue > 0) {
-            results.push({
-              area,
-              city,
-              date,
-              disease: row.disease.toLowerCase(),
-              cases: casesValue,
-            });
-          }
-        }
-
-        // ✅ Case 2: Wide format (dynamic disease columns)
-        else {
-          const { area, city, date, ...rest } = row;
-
-          Object.keys(rest).forEach((key) => {
-            const value = parseInt(rest[key]);
-
-            if (!isNaN(value) && value > 0) {
-              results.push({
-                area,
-                city,
-                date,
-                disease: key
-                  .replace("Cases", "") // remove "Cases"
-                  .replace(/([A-Z])/g, " $1") // split camelCase
-                  .trim()
-                  .toLowerCase(),
-                cases: value,
-              });
-            }
-          });
-        }
-      })
-      .on("end", () => resolve(results))
-      .on("error", (err) => reject(err));
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity,
   });
+
+  for await (const line of rl) {
+    const values = line.split(",");
+
+    // ✅ HANDLE EXACT FORMAT: area, city, date, disease, cases
+    if (values.length === 5) {
+      const [area, city, date, disease, cases] = values;
+
+      const casesValue = parseInt(cases);
+
+      if (!isNaN(casesValue)) {
+        results.push({
+          area: area.trim(),
+          city: city.trim(),
+          date: new Date(date.trim()),
+          disease: disease.trim().toLowerCase(),
+          cases: casesValue,
+        });
+      }
+    }
+  }
+
+  console.log("🔥 FINAL PARSED SAMPLE:", results[0]);
+
+  return results;
 };
 
 module.exports = { parseCSV };

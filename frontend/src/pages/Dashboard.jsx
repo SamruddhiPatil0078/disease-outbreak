@@ -1,233 +1,161 @@
-import { useState } from "react";
-import InputBar from "../components/InputBar";
-import Insights from "../components/Insights";
-import UploadForm from "../components/UploadForm";
+import { useEffect, useState } from "react";
+import { useOutletContext } from "react-router-dom";
+import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
+import HighRiskAlerts from "../components/HighRiskAlerts";
+import { MapPin, Shield, TrendingUp, AlertTriangle } from "lucide-react";
+import "leaflet/dist/leaflet.css";
+
+function FlyTo({ coords, zoom }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (coords) {
+      map.flyTo(coords, zoom, { duration: 1.8 });
+    }
+  }, [coords, zoom, map]);
+
+  return null;
+}
+
+const riskColor = (level) => {
+  switch (level) {
+    case "HIGH": return "#ef4444";
+    case "MEDIUM": return "#f59e0b";
+    case "LOW": return "#22c55e";
+    default: return "#3b82f6";
+  }
+};
 
 export default function Dashboard() {
-  const [riskData, setRiskData] = useState(null);
-  const [trendData, setTrendData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
+  const { riskData, loading, currentCity } = useOutletContext();
+  const [flyCoords, setFlyCoords] = useState(null);
+  const [flyZoom, setFlyZoom] = useState(5);
 
-  // Fetch risk prediction for a city
-  const fetchRisk = async (city) => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:3000/api/risk/calculate?city=${city}`
-      );
-      const json = await res.json();
-      console.log("RISK RESPONSE:", json);
+  useEffect(() => {
+    if (!currentCity) return;
 
-      if (json.success) {
-        setRiskData(json.data);
-      } else {
-        setRiskData(null);
-        alert(json.error || "No data found");
+    const geocode = async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(currentCity)}&countrycodes=in&format=json&limit=1`
+        );
+        const results = await res.json();
+
+        if (results.length > 0) {
+          setFlyCoords([
+            parseFloat(results[0].lat),
+            parseFloat(results[0].lon)
+          ]);
+          setFlyZoom(12);
+        }
+      } catch (err) {
+        console.error("Geocode error:", err);
       }
-    } catch (err) {
-      console.error(err);
-      alert("Failed to fetch risk data");
-    }
-    setLoading(false);
-  };
+    };
 
-  // Fetch trend analysis
-  const fetchTrend = async (city, disease) => {
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:3000/api/trend?city=${city}&disease=${disease}`
-      );
-      const json = await res.json();
-      setTrendData(json.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
+    geocode();
+  }, [currentCity]);
 
-  // After CSV upload, auto-fetch risk
-  const handleUploadSuccess = (cities) => {
-    if (cities && cities.length > 0) {
-      fetchRisk(cities[0]);
-    }
-  };
+  const data = riskData
+    ? (Array.isArray(riskData) ? riskData : [riskData])
+    : [];
 
   return (
-    <div
-      style={{
-        background: "#0f172a",
-        color: "#fff",
-        minHeight: "100vh",
-        padding: "20px",
-      }}
-    >
-      <h2>🦠 Disease Outbreak Dashboard</h2>
+    <div className="space-y-8 animate-fade-in">
 
-      <InputBar onSearch={fetchRisk} onTrend={fetchTrend} />
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+        <StatCard icon={<MapPin className="w-4 h-4" />} label="Areas Monitored" value={data.length || "—"} />
+        <StatCard icon={<AlertTriangle className="w-4 h-4" />} label="High Risk" value={data.filter(d => d.prediction?.level === "HIGH").length} />
+        <StatCard icon={<Shield className="w-4 h-4" />} label="Medium Risk" value={data.filter(d => d.prediction?.level === "MEDIUM").length} />
+        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="Low Risk" value={data.filter(d => d.prediction?.level === "LOW").length} />
+      </div>
 
-      <div style={{ display: "flex", gap: "20px", marginTop: "20px" }}>
-        {/* Left — Risk Results */}
-        <div
-          style={{
-            flex: 3,
-            background: "#1e293b",
-            padding: "20px",
-            borderRadius: "10px",
-          }}
-        >
-          {loading && <p>⏳ Analyzing...</p>}
-
-          {riskData && !loading && (
-            <div>
-              {/* Handle single result or array */}
-              {Array.isArray(riskData) ? (
-                riskData.map((r, i) => (
-                  <RiskCard key={i} data={r} />
-                ))
-              ) : (
-                <RiskCard data={riskData} />
-              )}
+      {/* MAP */}
+      <div className="relative">
+        <div className="glass p-1.5 overflow-hidden" style={{ height: "500px" }}>
+          {loading ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="animate-spin w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full" />
             </div>
-          )}
+          ) : (
+            <MapContainer
+              center={[20.5937, 78.9629]}
+              zoom={5}
+              style={{ width: "100%", height: "100%", borderRadius: "16px" }}
+            >
+              <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+              <FlyTo coords={flyCoords} zoom={flyZoom} />
 
-          {!riskData && !loading && (
-            <p style={{ color: "#94a3b8" }}>
-              Upload CSV or search a city to see predictions
-            </p>
+              {data.map((item, i) => {
+                const spread = 0.04; // tighter cluster
+
+                // ✅ FIXED COORDINATES (random cluster instead of line)
+                const lat = flyCoords
+                  ? flyCoords[0] + (Math.random() - 0.5) * spread
+                  : 20.5937 + (Math.random() - 0.5) * 5;
+
+                const lng = flyCoords
+                  ? flyCoords[1] + (Math.random() - 0.5) * spread
+                  : 78.9629 + (Math.random() - 0.5) * 5;
+
+                const color = riskColor(item.prediction?.level);
+                const isHigh = item.prediction?.level === "HIGH";
+
+                return (
+                  <CircleMarker
+                    key={i}
+                    center={[lat, lng]}
+                    radius={isHigh ? 14 : item.prediction?.level === "MEDIUM" ? 10 : 8}
+                    pathOptions={{
+                      color,
+                      fillColor: color,
+                      fillOpacity: 0.4,
+                      weight: 2
+                    }}
+                  >
+                    <Popup>
+                      <div>
+                        <strong>{item.area}</strong><br />
+                        {item.city}<br />
+                        <b style={{ color }}>{item.prediction?.level}</b><br />
+                        Disease: {item.prediction?.disease}
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                );
+              })}
+            </MapContainer>
           )}
         </div>
 
-        {/* Right — Upload */}
-        <div
-          style={{
-            flex: 1,
-            background: "#1e293b",
-            padding: "15px",
-            borderRadius: "10px",
-          }}
-        >
-          <button
-            onClick={() => setShowUpload(!showUpload)}
-            style={{
-              background: "#3b82f6",
-              color: "#fff",
-              border: "none",
-              padding: "8px 16px",
-              borderRadius: "6px",
-              cursor: "pointer",
-              width: "100%",
-            }}
-          >
-            {showUpload ? "Hide" : "📄 Upload CSV"}
-          </button>
-
-          {showUpload && <UploadForm onSuccess={handleUploadSuccess} />}
+        {/* Legend */}
+        <div className="absolute bottom-5 right-5 text-xs bg-black/70 p-3 rounded-lg">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 bg-red-500 rounded-full" /> High
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 bg-yellow-500 rounded-full" /> Medium
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 bg-green-500 rounded-full" /> Low
+          </div>
         </div>
       </div>
 
-      {/* Trend Data */}
-      {trendData && (
-        <div style={{ marginTop: "20px" }}>
-          <Insights data={trendData} />
-        </div>
-      )}
+      <HighRiskAlerts riskData={riskData} />
     </div>
   );
 }
 
-// Risk prediction card component
-function RiskCard({ data }) {
-  const levelColors = {
-    HIGH: "#ef4444",
-    MEDIUM: "#f59e0b",
-    LOW: "#22c55e",
-  };
-
+function StatCard({ icon, label, value }) {
   return (
-    <div
-      style={{
-        background: "#0f172a",
-        padding: "15px",
-        borderRadius: "8px",
-        marginBottom: "12px",
-        borderLeft: `4px solid ${data.prediction?.color || "#3b82f6"}`,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0 }}>
-          📍 {data.area}, {data.city}
-        </h3>
-        <span
-          style={{
-            background: levelColors[data.prediction?.level] || "#3b82f6",
-            padding: "4px 12px",
-            borderRadius: "20px",
-            fontSize: "12px",
-            fontWeight: "bold",
-          }}
-        >
-          {data.prediction?.level}
-        </span>
+    <div className="glass p-4 flex items-center gap-3">
+      {icon}
+      <div>
+        <p className="text-xl font-bold">{value}</p>
+        <p className="text-xs opacity-60">{label}</p>
       </div>
-
-      <div style={{ marginTop: "10px", display: "flex", gap: "20px", flexWrap: "wrap" }}>
-        <div>
-          <small style={{ color: "#94a3b8" }}>Disease</small>
-          <p style={{ margin: 0, fontWeight: "bold", fontSize: "18px" }}>
-            {data.prediction?.disease}
-          </p>
-        </div>
-        <div>
-          <small style={{ color: "#94a3b8" }}>Confidence</small>
-          <p style={{ margin: 0, fontWeight: "bold", fontSize: "18px" }}>
-            {data.prediction?.confidence}
-          </p>
-        </div>
-        <div>
-          <small style={{ color: "#94a3b8" }}>Expected Outbreak</small>
-          <p style={{ margin: 0, fontWeight: "bold", fontSize: "18px" }}>
-            {data.prediction?.expectedOutbreak}
-          </p>
-        </div>
-      </div>
-
-      {/* Weather */}
-      {data.weather && (
-        <div style={{ marginTop: "10px", display: "flex", gap: "15px", color: "#94a3b8", fontSize: "13px" }}>
-          <span>🌡️ {data.weather.temp}°C</span>
-          <span>💧 {data.weather.humidity}%</span>
-          <span>🌧️ {data.weather.rainfall}mm</span>
-        </div>
-      )}
-
-      {/* Top Diseases */}
-      {data.topDiseases && (
-        <div style={{ marginTop: "12px" }}>
-          <small style={{ color: "#94a3b8" }}>Top Diseases</small>
-          <div style={{ display: "flex", gap: "10px", marginTop: "4px", flexWrap: "wrap" }}>
-            {data.topDiseases.map((d, i) => (
-              <span
-                key={i}
-                style={{
-                  background: d.color || "#334155",
-                  padding: "3px 10px",
-                  borderRadius: "12px",
-                  fontSize: "12px",
-                }}
-              >
-                {d.name}: {d.probability}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Summary */}
-      {data.summary && (
-        <p style={{ marginTop: "10px", color: "#fbbf24", fontSize: "14px" }}>
-          {data.summary}
-        </p>
-      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, Component } from 'react';
 import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -6,7 +6,7 @@ import { COLORS, FONTS, SIZES, SHADOWS, getRiskColor } from '../constants/theme'
 
 const { width } = Dimensions.get('window');
 
-// Error Boundary to catch react-native-maps crashes in Expo Go
+// Error Boundary
 class MapErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -70,108 +70,22 @@ const fallbackStyles = StyleSheet.create({
   },
 });
 
-// Lazy load MapView to prevent crash on import
-let MapView = null;
-let Marker = null;
-
-try {
-  const maps = require('react-native-maps');
-  MapView = maps.default;
-  Marker = maps.Marker;
-} catch (e) {
-  console.warn('react-native-maps not available:', e.message);
-}
-
-// Custom Map Style for Dark Theme
+// Custom Map Style
 const darkMapStyle = [
   { elementType: 'geometry', stylers: [{ color: '#121A2F' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#121A2F' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
-  {
-    featureType: 'administrative.locality',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#8a99c7' }],
-  },
-  {
-    featureType: 'poi',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#d59563' }],
-  },
-  {
-    featureType: 'poi.park',
-    elementType: 'geometry',
-    stylers: [{ color: '#0B1120' }],
-  },
-  {
-    featureType: 'poi.park',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#6b9a76' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'geometry',
-    stylers: [{ color: '#1F2940' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'geometry.stroke',
-    stylers: [{ color: '#212a37' }],
-  },
-  {
-    featureType: 'road',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#9ca5b3' }],
-  },
-  {
-    featureType: 'road.highway',
-    elementType: 'geometry',
-    stylers: [{ color: '#2a3b5c' }],
-  },
-  {
-    featureType: 'road.highway',
-    elementType: 'geometry.stroke',
-    stylers: [{ color: '#1f2835' }],
-  },
-  {
-    featureType: 'road.highway',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#f3d19c' }],
-  },
-  {
-    featureType: 'transit',
-    elementType: 'geometry',
-    stylers: [{ color: '#2f3948' }],
-  },
-  {
-    featureType: 'transit.station',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#d59563' }],
-  },
-  {
-    featureType: 'water',
-    elementType: 'geometry',
-    stylers: [{ color: '#090e17' }],
-  },
-  {
-    featureType: 'water',
-    elementType: 'labels.text.fill',
-    stylers: [{ color: '#515c6d' }],
-  },
-  {
-    featureType: 'water',
-    elementType: 'labels.text.stroke',
-    stylers: [{ color: '#17263c' }],
-  },
 ];
 
+// Animated Marker
 const AnimatedRiskZone = ({ data, onPress }) => {
   const isHigh = data.prediction.level === 'HIGH';
   const color = getRiskColor(data.prediction.level);
-  
-  // Calculate size based on confidence (for variety)
+
   const confidence = parseInt(data.prediction.confidence) || 50;
-  const baseSize = 40 + (confidence / 2); 
+  const baseSize = 40 + (confidence / 2);
   const size = isHigh ? baseSize * 1.5 : baseSize;
+
+  // ✅ FIX ADDED
+  const totalSize = size * 2;
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(0.4)).current;
@@ -203,7 +117,7 @@ const AnimatedRiskZone = ({ data, onPress }) => {
               duration: 1500,
               useNativeDriver: true,
             }),
-          ])
+          ]),
         ])
       ).start();
     }
@@ -212,7 +126,6 @@ const AnimatedRiskZone = ({ data, onPress }) => {
   return (
     <Marker coordinate={data.coordinates} anchor={{ x: 0.5, y: 0.5 }} onPress={onPress}>
       <View style={[styles.markerContainer, { width: totalSize, height: totalSize }]}>
-        {/* Outer glow ring */}
         <View
           style={[
             styles.outerRing,
@@ -224,7 +137,6 @@ const AnimatedRiskZone = ({ data, onPress }) => {
             },
           ]}
         />
-        {/* Core dot — solid, bright, fully opaque */}
         <View
           style={[
             styles.coreDot,
@@ -243,10 +155,10 @@ const AnimatedRiskZone = ({ data, onPress }) => {
   );
 };
 
-const LiveMap = ({ data, onMarkerPress }) => {
+// Main Component
+const LiveMap = ({ data = [], onMarkerPress }) => {
   const mapRef = useRef(null);
 
-  // Center roughly in India
   const initialRegion = {
     latitude: 20.5937,
     longitude: 78.9629,
@@ -254,80 +166,30 @@ const LiveMap = ({ data, onMarkerPress }) => {
     longitudeDelta: 15.0,
   };
 
-  useEffect(() => {
-    // Zoom to fit filtered coordinates when data changes
-    if (mapRef.current && data && data.length > 0) {
-      const coords = data.filter(d => d.coordinates).map(d => d.coordinates);
-      if (coords.length > 0) {
-        if (coords.length === 1) {
-          mapRef.current.animateToRegion({
-            ...coords[0],
-            latitudeDelta: 0.5,
-            longitudeDelta: 0.5,
-          }, 1000);
-        } else {
-          mapRef.current.fitToCoordinates(coords, {
-            edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
-            animated: true,
-          });
-        }
-      }
-    }
-  }, [data]);
-
-  // Check if we have coordinate data to avoid maps crashing
   const hasCoordinates = data.some(d => d.coordinates);
 
   if (!hasCoordinates) {
-     return <View style={styles.fallback}><Text style={{color: '#fff'}}>No coordinate data available</Text></View>
-  }
-
-  // If MapView is not available (import failed), show fallback
-  if (!MapView) {
     return (
       <View style={styles.fallback}>
-        <Text style={{color: COLORS.textPrimary, fontSize: SIZES.md, ...FONTS.bold}}>🗺️ Map Unavailable</Text>
-        <Text style={{color: COLORS.textMuted, fontSize: SIZES.sm, textAlign: 'center', marginTop: 8}}>
-          Maps require a development build
-        </Text>
+        <Text style={{ color: '#fff' }}>No coordinate data available</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <MapView
-        style={styles.map}
-        initialRegion={initialRegion}
-        customMapStyle={darkMapStyle}
-      >
-        {data.map((item) => (
-          <AnimatedRiskZone key={item.id} data={item} onPress={() => onMarkerPress && onMarkerPress(item)} />
-        ))}
-      </MapView>
-
-      {/* Floating Legend */}
-      <View style={styles.legendContainer}>
-        <LinearGradient
-          colors={['rgba(18, 26, 47, 0.85)', 'rgba(11, 17, 32, 0.95)']}
-          style={styles.legendGradient}
-        >
-          <Text style={styles.legendTitle}>Risk Zones</Text>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: COLORS.high, ...SHADOWS.glowSm(COLORS.high) }]} />
-            <Text style={styles.legendText}>High</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: COLORS.medium }]} />
-            <Text style={styles.legendText}>Medium</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: COLORS.low }]} />
-            <Text style={styles.legendText}>Low</Text>
-          </View>
-        </LinearGradient>
+    <MapErrorBoundary>
+      <View style={styles.container}>
+        <MapView style={styles.map} initialRegion={initialRegion} customMapStyle={darkMapStyle}>
+          {data.map((item) => (
+            <AnimatedRiskZone
+              key={item.id}
+              data={item}
+              onPress={() => onMarkerPress && onMarkerPress(item)}
+            />
+          ))}
+        </MapView>
       </View>
-    </View>
+    </MapErrorBoundary>
   );
 };
 
@@ -337,7 +199,6 @@ const styles = StyleSheet.create({
     width: width,
     marginBottom: 20,
     overflow: 'hidden',
-    position: 'relative'
   },
   map: {
     ...StyleSheet.absoluteFillObject,
@@ -347,12 +208,11 @@ const styles = StyleSheet.create({
     width: width,
     backgroundColor: COLORS.bgMedium,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
   },
   markerContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-    overflow: 'visible',
   },
   outerRing: {
     position: 'absolute',
@@ -360,42 +220,6 @@ const styles = StyleSheet.create({
   coreDot: {
     position: 'absolute',
   },
-  legendContainer: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    borderRadius: SIZES.radiusSm,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  legendGradient: {
-    padding: 12,
-    gap: 8,
-  },
-  legendTitle: {
-    color: '#fff',
-    fontSize: SIZES.xs,
-    ...FONTS.bold,
-    marginBottom: 4,
-    letterSpacing: 0.5
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  legendText: {
-    color: COLORS.textSecondary,
-    fontSize: SIZES.sm,
-    ...FONTS.medium,
-  },
 });
 
 export default LiveMap;
-

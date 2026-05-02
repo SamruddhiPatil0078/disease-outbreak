@@ -37,6 +37,24 @@ const UploadScreen = () => {
     ).start();
   }, []);
 
+  // Helper: send upload via fetch with timeout (handles Render cold starts)
+  const sendUpload = async (formData, timeoutMs = 120000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(`${CONFIG.API_BASE_URL}/api/upload`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`);
+    }
+    return await response.json();
+  };
+
   const handleUpload = async () => {
     try {
       setError(null);
@@ -69,45 +87,64 @@ const UploadScreen = () => {
         });
       }
 
-      const xhr = new XMLHttpRequest();
-      
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) {
-          const p = (event.loaded / event.total) * 100;
-          setProgress(p);
+      setProgress(30); // Show progress while uploading
+
+      // Auto-retry: if first attempt fails (cold start), retry once
+      let uploadResult;
+      try {
+        uploadResult = await sendUpload(formData);
+      } catch (firstErr) {
+        console.log('⏳ First upload attempt failed, retrying...', firstErr.message);
+        setProgress(10);
+        // Wait 3 seconds for server to finish waking up
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Rebuild FormData for retry (previous one may be consumed)
+        const retryFormData = new FormData();
+        if (typeof window !== 'undefined' && window.document) {
+          const response = await fetch(file.uri);
+          const blob = await response.blob();
+          retryFormData.append('file', blob, file.name);
+        } else {
+          retryFormData.append('file', {
+            uri: file.uri,
+            name: file.name,
+            type: file.mimeType || 'text/csv',
+          });
         }
-      });
+        setProgress(30);
+        uploadResult = await sendUpload(retryFormData);
+      }
 
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === 4) {
-          setIsUploading(false);
-          if (xhr.status === 200) {
-            const response = JSON.parse(xhr.responseText);
-            if (response.success) {
-              // 🔥 Trigger immediate system-wide refresh
-              refreshData();
+      setProgress(80);
 
-              setUploadComplete(true);
-              setTimeout(() => {
-                setUploadComplete(false);
-                setProgress(0);
-              }, 4000);
-            } else {
-              setError(response.error || 'Upload failed');
-            }
-          } else {
-            setError('Server error during upload');
-          }
-        }
-      };
+      if (uploadResult.success) {
+        setProgress(100);
 
-      xhr.open('POST', `${CONFIG.API_BASE_URL}/api/upload`);
-      xhr.send(formData);
+        // Wait 2 seconds for data to fully commit before refreshing dashboard
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Trigger system-wide refresh (this fetches risk data from the ML engine)
+        refreshData();
+
+        setIsUploading(false);
+        setUploadComplete(true);
+        setTimeout(() => {
+          setUploadComplete(false);
+          setProgress(0);
+        }, 4000);
+      } else {
+        setIsUploading(false);
+        setError(uploadResult.error || 'Upload failed');
+      }
 
     } catch (err) {
       console.error('Upload Error:', err);
       setIsUploading(false);
-      setError('An unexpected error occurred');
+      if (err.name === 'AbortError') {
+        setError('Server is starting up. Please wait a moment and try again.');
+      } else {
+        setError('Upload failed. Please check your connection and try again.');
+      }
     }
   };
 

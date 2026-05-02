@@ -48,16 +48,33 @@ export const OutbreakProvider = ({ children }) => {
         : `${CONFIG.API_BASE_URL}/api/risk/calculate`;
 
       // Auto-retry logic for Render free-tier cold starts
-      // First attempt: 120s timeout (enough for both servers to wake up)
-      // If it fails, retry once (servers should be awake by now)
+      // Both backend + ML servers may be sleeping, each takes ~50s to wake
+      // We try up to 3 times with delays so the user never sees "Unable to Connect"
+      const MAX_RETRIES = 3;
+      const TIMEOUT_MS = 90000; // 90s per attempt
       let json;
-      try {
-        json = await attemptFetch(url, 120000);
-      } catch (firstErr) {
-        console.log('⏳ First attempt failed, retrying (servers may be waking up)...', firstErr.message);
-        // Wait 3 seconds then retry — servers should be awake now
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        json = await attemptFetch(url, 120000);
+      let lastError;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          console.log(`🔄 Fetch attempt ${attempt}/${MAX_RETRIES}...`);
+          json = await attemptFetch(url, TIMEOUT_MS);
+          break; // Success — exit loop
+        } catch (err) {
+          lastError = err;
+          console.log(`⏳ Attempt ${attempt} failed: ${err.message}`);
+          if (attempt < MAX_RETRIES) {
+            // Wait before retrying (servers should be waking up)
+            const delayMs = attempt === 1 ? 5000 : 3000;
+            console.log(`⏳ Waiting ${delayMs / 1000}s before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+        }
+      }
+
+      // If all retries failed, throw the last error
+      if (!json) {
+        throw lastError;
       }
       
       if (json.success && Array.isArray(json.data)) {

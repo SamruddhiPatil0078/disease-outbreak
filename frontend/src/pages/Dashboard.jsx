@@ -1,206 +1,225 @@
-import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
-import HighRiskAlerts from "../components/HighRiskAlerts";
-import { MapPin, Shield, TrendingUp, AlertTriangle } from "lucide-react";
-import "leaflet/dist/leaflet.css";
+import React, { useEffect, useRef, useState, Component } from 'react';
+import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import { LinearGradient } from 'expo-linear-gradient';
+import { COLORS, FONTS, SIZES, SHADOWS, getRiskColor } from '../constants/theme';
 
-// Fly to a specific location when city is searched
-function FlyTo({ coords, zoom }) {
-  const map = useMap();
+const { width } = Dimensions.get('window');
 
-  useEffect(() => {
-    if (coords) {
-      map.flyTo(coords, zoom, { duration: 1.8 });
-    }
-  }, [coords, zoom, map]);
-
-  return null;
-}
-
-// Auto-fit map bounds to show all markers
-function AutoFitBounds({ data }) {
-  const map = useMap();
-
-  useEffect(() => {
-    const validItems = data.filter((d) => d.lat && d.lng);
-    if (validItems.length === 0) return;
-
-    const lats = validItems.map((d) => d.lat);
-    const lngs = validItems.map((d) => d.lng);
-
-    const bounds = [
-      [Math.min(...lats) - 0.5, Math.min(...lngs) - 0.5],
-      [Math.max(...lats) + 0.5, Math.max(...lngs) + 0.5],
-    ];
-
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 13, duration: 1.5 });
-  }, [data, map]);
-
-  return null;
-}
-
-const riskColor = (level) => {
-  switch (level) {
-    case "HIGH": return "#ef4444";
-    case "MEDIUM": return "#f59e0b";
-    case "LOW": return "#22c55e";
-    default: return "#3b82f6";
+// Error Boundary
+class MapErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
   }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.warn('MapView crashed:', error.message);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={fallbackStyles.container}>
+          <LinearGradient
+            colors={['rgba(18, 26, 47, 0.95)', 'rgba(11, 17, 32, 0.95)']}
+            style={fallbackStyles.gradient}
+          >
+            <Text style={fallbackStyles.icon}>🗺️</Text>
+            <Text style={fallbackStyles.title}>Map Unavailable</Text>
+            <Text style={fallbackStyles.subtitle}>
+              Maps require a development build.{'\n'}Use the web dashboard for map view.
+            </Text>
+          </LinearGradient>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const fallbackStyles = StyleSheet.create({
+  container: {
+    height: 350,
+    width: width,
+    borderRadius: SIZES.radius,
+    overflow: 'hidden',
+  },
+  gradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  icon: { fontSize: 48 },
+  title: {
+    color: COLORS.textPrimary,
+    fontSize: SIZES.lg,
+    ...FONTS.bold,
+  },
+  subtitle: {
+    color: COLORS.textMuted,
+    fontSize: SIZES.sm,
+    ...FONTS.regular,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+});
+
+// Custom Map Style
+const darkMapStyle = [
+  { elementType: 'geometry', stylers: [{ color: '#121A2F' }] },
+];
+
+// Animated Marker
+const AnimatedRiskZone = ({ data, onPress }) => {
+  const isHigh = data.prediction.level === 'HIGH';
+  const color = getRiskColor(data.prediction.level);
+
+  const confidence = parseInt(data.prediction.confidence) || 50;
+  const baseSize = 40 + (confidence / 2);
+  const size = isHigh ? baseSize * 1.5 : baseSize;
+
+  // ✅ FIX ADDED
+  const totalSize = size * 2;
+
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const opacityAnim = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    if (isHigh) {
+      Animated.loop(
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(pulseAnim, {
+              toValue: 1.5,
+              duration: 1500,
+              useNativeDriver: true,
+            }),
+            Animated.timing(pulseAnim, {
+              toValue: 1,
+              duration: 1500,
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.sequence([
+            Animated.timing(opacityAnim, {
+              toValue: 0.1,
+              duration: 1500,
+              useNativeDriver: true,
+            }),
+            Animated.timing(opacityAnim, {
+              toValue: 0.4,
+              duration: 1500,
+              useNativeDriver: true,
+            }),
+          ]),
+        ])
+      ).start();
+    }
+  }, [isHigh]);
+
+  return (
+    <Marker coordinate={data.coordinates} anchor={{ x: 0.5, y: 0.5 }} onPress={onPress}>
+      <View style={[styles.markerContainer, { width: totalSize, height: totalSize }]}>
+        <View
+          style={[
+            styles.outerRing,
+            {
+              width: totalSize,
+              height: totalSize,
+              borderRadius: totalSize / 2,
+              backgroundColor: `${color}35`,
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.coreDot,
+            {
+              width: size,
+              height: size,
+              borderRadius: size / 2,
+              backgroundColor: color,
+              borderWidth: 1.5,
+              borderColor: '#FFFFFF',
+            },
+          ]}
+        />
+      </View>
+    </Marker>
+  );
 };
 
-export default function Dashboard() {
-  const { riskData, loading, currentCity } = useOutletContext();
-  const [flyCoords, setFlyCoords] = useState(null);
-  const [flyZoom, setFlyZoom] = useState(5);
+// Main Component
+const LiveMap = ({ data = [], onMarkerPress }) => {
+  const mapRef = useRef(null);
 
-  const data = riskData
-    ? (Array.isArray(riskData) ? riskData : [riskData])
-    : [];
+  const initialRegion = {
+    latitude: 20.5937,
+    longitude: 78.9629,
+    latitudeDelta: 15.0,
+    longitudeDelta: 15.0,
+  };
 
-  useEffect(() => {
-    if (!currentCity) return;
+  const hasCoordinates = data.some(d => d.coordinates);
 
-    const geocode = async () => {
-      try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(currentCity)}&countrycodes=in&format=json&limit=1`
-        );
-        const results = await res.json();
-
-          if (results.length > 0) {
-            setFlyCoords([
-              parseFloat(results[0].lat),
-              parseFloat(results[0].lon)
-            ]);
-            setFlyZoom(12);
-          }
-        } catch (err) {
-          console.error("Geocode error:", err);
-        }
-      };
-      geocodeCity();
-    } else if (data.length > 0) {
-      // No city search: auto-fly to first HIGH risk area, or first geocoded area
-      const highRisk = data.find(d => d.prediction?.level === "HIGH" && d.lat && d.lng);
-      const firstGeo = data.find(d => d.lat && d.lng);
-      const target = highRisk || firstGeo;
-
-      if (target) {
-        setFlyCoords([target.lat, target.lng]);
-        setFlyZoom(data.length > 5 ? 7 : 10);
-      }
-    }
-  }, [currentCity, data.length]);
+  if (!hasCoordinates) {
+    return (
+      <View style={styles.fallback}>
+        <Text style={{ color: '#fff' }}>No coordinate data available</Text>
+      </View>
+    );
+  }
 
   return (
-    <div className="space-y-8 animate-fade-in">
-
-      {/* Page Title */}
-      <div>
-        <h1 className="text-3xl font-bold text-white tracking-tight">Disease Outbreak</h1>
-        <p className="text-sm text-navy-500 mt-1">Real-time monitoring & risk prediction dashboard</p>
-      </div>
-
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
-        <StatCard icon={<MapPin className="w-4 h-4" />} label="Areas Monitored" value={data.length || "—"} />
-        <StatCard icon={<AlertTriangle className="w-4 h-4" />} label="High Risk" value={data.filter(d => d.prediction?.level === "HIGH").length} />
-        <StatCard icon={<Shield className="w-4 h-4" />} label="Medium Risk" value={data.filter(d => d.prediction?.level === "MEDIUM").length} />
-        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="Low Risk" value={data.filter(d => d.prediction?.level === "LOW").length} />
-      </div>
-
-      {/* MAP */}
-      <div className="relative">
-        <div className="glass p-1.5 overflow-hidden" style={{ height: "500px" }}>
-          {loading ? (
-            <div className="w-full h-full flex items-center justify-center">
-              <div className="animate-spin w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full" />
-            </div>
-          ) : (
-            <MapContainer
-              center={[20.5937, 78.9629]}
-              zoom={5}
-              style={{ width: "100%", height: "100%", borderRadius: "16px" }}
-            >
-              <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-              
-              {/* Fly to searched city if available, else auto-fit markers */}
-              {flyCoords ? (
-                <FlyTo coords={flyCoords} zoom={flyZoom} />
-              ) : (
-                <AutoFitBounds data={data} />
-              )}
-
-              {data.map((item, i) => {
-                const spread = 0.04; // tighter cluster
-
-                // ✅ FIXED COORDINATES (random cluster instead of line)
-                const lat = flyCoords
-                  ? flyCoords[0] + (Math.random() - 0.5) * spread
-                  : 20.5937 + (Math.random() - 0.5) * 5;
-
-                const lng = flyCoords
-                  ? flyCoords[1] + (Math.random() - 0.5) * spread
-                  : 78.9629 + (Math.random() - 0.5) * 5;
-
-                const color = riskColor(item.prediction?.level);
-                const isHigh = item.prediction?.level === "HIGH";
-
-                return (
-                  <CircleMarker
-                    key={i}
-                    center={[lat, lng]}
-                    radius={isHigh ? 14 : item.prediction?.level === "MEDIUM" ? 10 : 8}
-                    pathOptions={{
-                      color,
-                      fillColor: color,
-                      fillOpacity: 0.5,
-                      weight: 2
-                    }}
-                  >
-                    <Popup>
-                      <div>
-                        <strong>{item.area}</strong><br />
-                        {item.city}<br />
-                        <b style={{ color }}>{item.prediction?.level}</b><br />
-                        Disease: {item.prediction?.disease}
-                      </div>
-                    </Popup>
-                  </CircleMarker>
-                );
-              })}
-            </MapContainer>
-          )}
-        </div>
-
-        {/* Legend */}
-        <div className="absolute bottom-5 right-5 text-xs bg-black/70 p-3 rounded-lg">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 bg-red-500 rounded-full" /> High
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 bg-yellow-500 rounded-full" /> Medium
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 bg-green-500 rounded-full" /> Low
-          </div>
-        </div>
-      </div>
-
-      <HighRiskAlerts riskData={riskData} />
-    </div>
+    <MapErrorBoundary>
+      <View style={styles.container}>
+        <MapView style={styles.map} initialRegion={initialRegion} customMapStyle={darkMapStyle}>
+          {data.map((item) => (
+            <AnimatedRiskZone
+              key={item.id}
+              data={item}
+              onPress={() => onMarkerPress && onMarkerPress(item)}
+            />
+          ))}
+        </MapView>
+      </View>
+    </MapErrorBoundary>
   );
-}
+};
 
-function StatCard({ icon, label, value }) {
-  return (
-    <div className="glass p-4 flex items-center gap-3">
-      {icon}
-      <div>
-        <p className="text-xl font-bold">{value}</p>
-        <p className="text-xs opacity-60">{label}</p>
-      </div>
-    </div>
-  );
-}
+const styles = StyleSheet.create({
+  container: {
+    height: 350,
+    width: width,
+    marginBottom: 20,
+    overflow: 'hidden',
+  },
+  map: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  fallback: {
+    height: 350,
+    width: width,
+    backgroundColor: COLORS.bgMedium,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  markerContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  outerRing: {
+    position: 'absolute',
+  },
+  coreDot: {
+    position: 'absolute',
+  },
+});
+
+export default LiveMap;
